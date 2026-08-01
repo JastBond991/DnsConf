@@ -21,6 +21,15 @@ import java.util.stream.Collectors;
 @Setter(onMethod_ = @Autowired)
 public abstract class ListLoader<T> {
 
+    /**
+     * IP для всех доменов ChatGPT/OpenAI.
+     * Если захочешь вернуть оригинальные IP из GeoHide,
+     * просто оставь пустую строку:
+     *
+     * private static final String CHATGPT_OVERRIDE_IP = "";
+     */
+    private static final String CHATGPT_OVERRIDE_IP = "95.182.120.241";
+
     private HttpClient client;
 
     protected abstract T toObject(String line);
@@ -33,11 +42,15 @@ public abstract class ListLoader<T> {
     @SuppressWarnings("preview")
     public List<T> fetchWebsites(List<String> urls) {
         @Cleanup var scope = StructuredTaskScope.open();
+
         List<StructuredTaskScope.Subtask<String>> requests = new ArrayList<>();
+
         urls.stream()
                 .map(url -> scope.fork(() -> fetchList(url)))
                 .forEach(requests::add);
+
         scope.join();
+
         return requests.stream()
                 .map(StructuredTaskScope.Subtask::get)
                 .map(String::stripIndent)
@@ -55,10 +68,62 @@ public abstract class ListLoader<T> {
     @SneakyThrows
     private String fetchList(String url) {
         Log.io("Loading %s list from url: %s".formatted(listType(), url));
+
         HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                 .GET()
                 .build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
+
+        String body = client.send(
+                request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
+        ).body();
+
+        return rewriteChatGptBlock(body);
+    }
+
+    private String rewriteChatGptBlock(String body) {
+
+        if (CHATGPT_OVERRIDE_IP == null || CHATGPT_OVERRIDE_IP.isBlank()) {
+            return body;
+        }
+
+        boolean inChatGptBlock = false;
+        StringBuilder result = new StringBuilder(body.length());
+
+        String[] lines = body.split("\\R", -1);
+
+        for (int i = 0; i < lines.length; i++) {
+
+            String line = lines[i];
+
+            if (line.startsWith("# ChatGPT (OpenAI)")) {
+                inChatGptBlock = true;
+                result.append(line);
+            } else {
+
+                if (inChatGptBlock && line.startsWith("#") && !line.startsWith("# ChatGPT (OpenAI)")) {
+                    inChatGptBlock = false;
+                }
+
+                if (inChatGptBlock) {
+
+                    if (line.startsWith("45.155.204.190")) {
+                        line = CHATGPT_OVERRIDE_IP + line.substring("45.155.204.190".length());
+                    } else if (line.startsWith("37.230.192.51")) {
+                        line = CHATGPT_OVERRIDE_IP + line.substring("37.230.192.51".length());
+                    }
+
+                }
+
+                result.append(line);
+            }
+
+            if (i < lines.length - 1) {
+                result.append('\n');
+            }
+        }
+
+        return result.toString();
     }
 
     protected String removeWWW(String domain) {
@@ -67,5 +132,4 @@ public abstract class ListLoader<T> {
         }
         return domain;
     }
-
 }
