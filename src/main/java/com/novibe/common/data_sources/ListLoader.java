@@ -21,14 +21,8 @@ import java.util.stream.Collectors;
 @Setter(onMethod_ = @Autowired)
 public abstract class ListLoader<T> {
 
-    /**
-     * IP для всех доменов ChatGPT/OpenAI.
-     * Если захочешь вернуть оригинальные IP из GeoHide,
-     * просто оставь пустую строку:
-     *
-     * private static final String CHATGPT_OVERRIDE_IP = "";
-     */
     private static final String CHATGPT_OVERRIDE_IP = "95.182.120.241";
+    private static final String GOOGLE_AI_OVERRIDE_IP = "95.182.120.241";
 
     private HttpClient client;
 
@@ -78,17 +72,15 @@ public abstract class ListLoader<T> {
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
         ).body();
 
-        return rewriteChatGptBlock(body);
+        return rewriteSpecialBlocks(body);
     }
 
-    private String rewriteChatGptBlock(String body) {
+    private String rewriteSpecialBlocks(String body) {
 
-        if (CHATGPT_OVERRIDE_IP == null || CHATGPT_OVERRIDE_IP.isBlank()) {
-            return body;
-        }
+        StringBuilder result = new StringBuilder(body.length());
 
         boolean inChatGptBlock = false;
-        StringBuilder result = new StringBuilder(body.length());
+        boolean inGoogleAiBlock = false;
 
         String[] lines = body.split("\\R", -1);
 
@@ -98,25 +90,34 @@ public abstract class ListLoader<T> {
 
             if (line.startsWith("# ChatGPT (OpenAI)")) {
                 inChatGptBlock = true;
-                result.append(line);
+                inGoogleAiBlock = false;
+
+            } else if (line.startsWith("# Google AI")) {
+                inChatGptBlock = false;
+                inGoogleAiBlock = true;
+
+            } else if (line.startsWith("#")) {
+                inChatGptBlock = false;
+                inGoogleAiBlock = false;
+
             } else {
 
-                if (inChatGptBlock && line.startsWith("#") && !line.startsWith("# ChatGPT (OpenAI)")) {
-                    inChatGptBlock = false;
-                }
-
                 if (inChatGptBlock) {
-
-                    if (line.startsWith("45.155.204.190")) {
-                        line = CHATGPT_OVERRIDE_IP + line.substring("45.155.204.190".length());
-                    } else if (line.startsWith("37.230.192.51")) {
-                        line = CHATGPT_OVERRIDE_IP + line.substring("37.230.192.51".length());
-                    }
-
+                    line = replaceGeoHideIp(
+                            line,
+                            CHATGPT_OVERRIDE_IP
+                    );
                 }
 
-                result.append(line);
+                if (inGoogleAiBlock) {
+                    line = replaceGeoHideIp(
+                            line,
+                            GOOGLE_AI_OVERRIDE_IP
+                    );
+                }
             }
+
+            result.append(line);
 
             if (i < lines.length - 1) {
                 result.append('\n');
@@ -126,10 +127,26 @@ public abstract class ListLoader<T> {
         return result.toString();
     }
 
+    private String replaceGeoHideIp(String line, String replacementIp) {
+
+        if (line.startsWith("45.155.204.190")) {
+            return replacementIp
+                    + line.substring("45.155.204.190".length());
+        }
+
+        if (line.startsWith("37.230.192.51")) {
+            return replacementIp
+                    + line.substring("37.230.192.51".length());
+        }
+
+        return line;
+    }
+
     protected String removeWWW(String domain) {
         if (domain.startsWith("www.")) {
             return domain.substring("www.".length());
         }
+
         return domain;
     }
 }
